@@ -5,7 +5,6 @@
 
 This is a starter project to help you get started with developing a retrieval agent using [LangGraph](https://github.com/langchain-ai/langgraph) in [LangGraph Studio](https://github.com/langchain-ai/langgraph-studio).
 
-![Graph view in LangGraph studio UI](./static/studio_ui.png)
 
 It contains example graphs exported from `src/retrieval_agent/graph.py` that implement a retrieval-based question answering system.
 
