@@ -1,0 +1,72 @@
+# Core async & web server libs
+aiohttp==3.11.16           # Async HTTP client/server
+aiosignal==1.3.2           # Signal handling for aiohttp
+anyio                      # Async IO compatibility layer
+async-timeout==4.0.3       # Timeout support for async ops
+asgiref==3.8.1             # ASGI interface reference
+
+# Utilities
+backoff==2.2.1             # Retry with exponential backoff
+bcrypt==4.3.0              # Secure hashing (used by FastAPI auth, if added)
+cachetools==5.5.2          # Caching utility (for Hugging Face or remote APIs)
+
+# HTTP libraries
+charset-normalizer         # Character encoding detection
+httpx                      # Modern async HTTP client used by LangChain
+urllib3                    # Required for requests and HTTPX internals
+
+# FastAPI stack
+fastapi==0.115.9           # Web framework for APIs
+starlette==0.45.3          # FastAPI's async core
+uvicorn==0.34.1            # ASGI web server for FastAPI
+
+# LangChain and LangGraph stack
+langchain==0.3.23                  # Core LangChain LLM orchestration
+langchain-core                     # Base interfaces and objects
+langchain-community==0.3.21        # Integrations (retrievers, loaders)
+langchain-ollama==0.3.2            # Interface to local Ollama LLMs
+langchain-text-splitters==0.3.8    # Semantic, recursive, and token-aware chunkers
+
+# LangGraph stack for agent workflows and server
+langgraph==0.3.30                  # LangGraph graph-based workflow engine
+langgraph-cli==0.2.4               # CLI interface to start/serve graphs
+langgraph-checkpoint==2.0.24       # Optional: checkpointer plugin
+langgraph-prebuilt==0.1.8          # Support for prebuilt toolchains
+langgraph-sdk==0.1.61              # SDK for LangGraph server interactions
+
+# LangSmith tracing
+langsmith                         # Tracing, logging, and observability for LangChain
+
+# Vectorstore / Retrieval
+chromadb==0.6.3                    # Persistent vector database with HNSW indexing
+chroma-hnswlib==0.7.6              # Native ANN engine for Chroma
+
+# LLM embeddings / tools
+tiktoken==0.9.0                    # Token counting (OpenAI-style models)
+huggingface-hub==0.30.2            # HuggingFace model/dataset access
+
+# Dev tools
+pydantic==2.6.1                    # Data validation and model typing
+typing_extensions                  # Extended types for pydantic
+tenacity                           # Retry logic (used by LangChain)
+typer                              # CLI interface generation
+tqdm                               # Progress bars
+
+# Data tools
+pandas==2.2.3                      # CSV/JSON parsing, profiling, tabular ops
+numpy                              # Math backend
+
+# Tracing / Observability
+opentelemetry-api==1.32.1
+opentelemetry-sdk==1.32.1
+opentelemetry-instrumentation==0.53b1
+opentelemetry-instrumentation-fastapi==0.53b1
+opentelemetry-exporter-otlp-proto-grpc==1.32.1
+
+# Optional monitoring
+wandb                              # Weights & Biases logging
+
+# Compatibility
+python-dotenv                      # Env variable management
+pytz                               # Timezone support
+zipp                               # Zip archive support
