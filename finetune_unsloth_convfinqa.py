@@ -100,8 +100,8 @@ trainer = SFTTrainer(
         seed=3407,
         report_to="wandb",
         run_name="llama-convfinqa-sft",
-        bf16=torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8,
-    ),
+        fp16=True,
+        bf16=False,    
 )
 
 # --- Train ---
