@@ -1,81 +1,119 @@
-# finetune_unsloth_convfinqa_hf.py
-
+import torch
 from datasets import load_dataset
 from unsloth import FastLanguageModel
-from transformers import TrainingArguments, Trainer, DataCollatorForLanguageModeling
-import torch
+from unsloth.peft import get_peft_config
+from transformers import DataCollatorForLanguageModeling
+from trl import SFTTrainer, SFTConfig
+import wandb
 
-MODEL_NAME = "unsloth/llama-3-8b-Instruct-bnb-4bit"
-
-# Load Unsloth-compatible LLaMA 3 model
+# --- Config ---
+model_name = "unsloth/llama-3-8b-Instruct-bnb-4bit"
 max_seq_length = 2048
-use_flash_attn = True
+batch_size = 2
+gradient_accumulation_steps = 4
+total_steps = 200
+eval_steps = 50
+save_steps = 50
+logging_steps = 1
+output_dir = "outputs"
+project_name = "tomoro"
+
+# --- Load Dataset ---
+dataset = load_dataset("TheFinAI/CONVFINQA_train", split="train")
+
+def format_conversation(example):
+    dialogue = ""
+    for turn in example["entries"]:
+        role = turn["role"]
+        content = turn["content"].strip()
+        if role == "human":
+            dialogue += f"<|user|>\n{content}\n"
+        elif role == "agent":
+            dialogue += f"<|assistant|>\n{content}\n"
+    return {"text": dialogue.strip()}
+
+dataset = dataset.map(format_conversation)
+dataset = dataset.remove_columns(["id", "entries"])
+
+# --- Load Model & Tokenizer with LoRA ---
+peft_config = get_peft_config(
+    r=64,
+    lora_alpha=16,
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM"
+)
+
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name = MODEL_NAME,
-    max_seq_length = max_seq_length,
-    dtype = torch.float16,
-    load_in_4bit = True,
-    use_flash_attention_2 = use_flash_attn,
+    model_name=model_name,
+    max_seq_length=max_seq_length,
+    dtype=torch.float16,
+    load_in_4bit=True,
+    attn_implementation="flash_attention_2",
+    peft_config=peft_config,
 )
 
-# Load dataset from Hugging Face Hub
-raw_dataset = load_dataset("TheFinAI/CONVFINQA_train", split="train")
+# --- Tokenize ---
+def tokenize(example):
+    return tokenizer(
+        example["text"],
+        truncation=True,
+        max_length=max_seq_length,
+        padding=False,
+        return_tensors=None,
+        return_special_tokens_mask=True,
+    )
 
-# Reformat into prompt-completion examples
-def format_example(example):
-    history = example.get("history", [])
-    question = example.get("question", "")
-    paragraphs = example.get("paragraphs", [])
-    table = example.get("table", [])
-    program = example.get("program", [])
+dataset = dataset.map(tokenize, remove_columns=["text"], batched=True, batch_size=8)
 
-    # Join context
-    history_block = " ".join(history)
-    context_block = "\n".join(paragraphs)
-    table_block = "\n".join([f"{row['name']}: {row['value']}" for row in table])
-    full_question = f"{history_block} {question}".strip()
+# --- Split Dataset ---
+split = dataset.train_test_split(test_size=0.05, seed=42)
+train_dataset = split["train"]
+eval_dataset = split["test"]
 
-    # Final prompt
-    prompt = f"""<|user|>
-Question: {full_question}
-Context:
-{context_block}
+# --- Data Collator ---
+collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-Table:
-{table_block}
+# --- W&B Login ---
+wandb.init(project=project_name)
 
-Generate the program to compute the answer.
-<|assistant|>"""
-
-    program_text = " ".join(program)
-    return {"text": prompt + " " + program_text}
-
-# Apply formatting
-dataset = raw_dataset.map(format_example, remove_columns=raw_dataset.column_names)
-
-# Tokenize
-tokenized = dataset.map(lambda x: tokenizer(x["text"]), remove_columns=["text"])
-
-# Prepare model for SFT
-model = FastLanguageModel.prepare_model_for_training(model)
-
-# Trainer setup
-trainer = Trainer(
-    model = model,
-    train_dataset = tokenized,
-    args = TrainingArguments(
-        per_device_train_batch_size = 2,
-        gradient_accumulation_steps = 4,
-        warmup_steps = 5,
-        num_train_epochs = 3,
-        learning_rate = 2e-5,
-        fp16 = True,
-        logging_steps = 10,
-        output_dir = "checkpoints/unsloth-convfinqa-hf",
-        save_strategy = "epoch",
-        report_to = "none",
+# --- Trainer ---
+trainer = SFTTrainer(
+    model=model,
+    tokenizer=tokenizer,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    data_collator=collator,
+    args=SFTConfig(
+        dataset_text_field="text",
+        output_dir=output_dir,
+        max_seq_length=max_seq_length,
+        per_device_train_batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        warmup_steps=10,
+        max_steps=total_steps,
+        logging_steps=logging_steps,
+        save_steps=save_steps,
+        eval_steps=eval_steps,
+        optim="adamw_8bit",
+        seed=3407,
+        report_to="wandb",
+        run_name="llama-convfinqa-sft",
+        bf16=torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8,
     ),
-    data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False),
 )
 
+# --- Train ---
 trainer.train()
+
+# --- Evaluation ---
+print("__ Evaluating on validation set...")
+eval_results = trainer.evaluate()
+print("__ Eval Loss:", eval_results.get("eval_loss"))
+
+# --- Inference Sample ---
+sample = eval_dataset[0]
+inputs = tokenizer(sample["text"], return_tensors="pt").to(model.device)
+outputs = model.generate(**inputs, max_new_tokens=100)
+print("__ Sample Output:")
+print(tokenizer.decode(outputs[0], skip_special_tokens=True))
