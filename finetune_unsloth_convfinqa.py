@@ -1,8 +1,8 @@
 import torch
 from datasets import load_dataset
 from unsloth import FastLanguageModel
-from unsloth.peft import get_peft_config
 from transformers import DataCollatorForLanguageModeling
+from peft import LoraConfig, get_peft_model, TaskType
 from trl import SFTTrainer, SFTConfig
 import wandb
 
@@ -35,23 +35,24 @@ def format_conversation(example):
 dataset = dataset.map(format_conversation)
 dataset = dataset.remove_columns(["id", "entries"])
 
-# --- Load Model & Tokenizer with LoRA ---
-peft_config = get_peft_config(
-    r=64,
-    lora_alpha=16,
-    lora_dropout=0.05,
-    bias="none",
-    task_type="CAUSAL_LM"
-)
-
+# --- Load Model & Tokenizer ---
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_name,
     max_seq_length=max_seq_length,
     dtype=torch.float16,
     load_in_4bit=True,
-    attn_implementation="flash_attention_2",
-    peft_config=peft_config,
+    attn_implementation="flash_attention_2"
 )
+
+# --- Inject LoRA Adapters ---
+peft_config = LoraConfig(
+    r=64,
+    lora_alpha=16,
+    lora_dropout=0.05,
+    bias="none",
+    task_type=TaskType.CAUSAL_LM
+)
+model = get_peft_model(model, peft_config)
 
 # --- Tokenize ---
 def tokenize(example):
