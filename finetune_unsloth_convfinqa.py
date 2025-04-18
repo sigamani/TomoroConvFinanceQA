@@ -1,13 +1,13 @@
-# finetune_unsloth_convfinqa.py
+# finetune_unsloth_convfinqa_hf.py
 
-from datasets import load_dataset, Dataset
+from datasets import load_dataset
 from unsloth import FastLanguageModel
 from transformers import TrainingArguments, Trainer, DataCollatorForLanguageModeling
-import torch, json
+import torch
 
 MODEL_NAME = "unsloth/llama-3-8b-Instruct-bnb-4bit"
 
-# Load Unsloth model
+# Load Unsloth-compatible LLaMA 3 model
 max_seq_length = 2048
 use_flash_attn = True
 model, tokenizer = FastLanguageModel.from_pretrained(
@@ -15,45 +15,51 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     max_seq_length = max_seq_length,
     dtype = torch.float16,
     load_in_4bit = True,
-    use_flash_attention_2 = use_flash_attn
+    use_flash_attention_2 = use_flash_attn,
 )
 
-# Load and preprocess ConvFinQA
-def load_and_format(path):
-    with open(path, "r") as f:
-        raw = json.load(f)
+# Load dataset from Hugging Face Hub
+raw_dataset = load_dataset("TheFinAI/CONVFINQA_train", split="train")
 
-    samples = []
-    for ex in raw:
-        question = " ".join(ex["history"] + [ex["question"]])
-        paragraphs = "\n".join(ex["paragraphs"])
-        table = "\n".join([f"{row['name']}: {row['value']}" for row in ex["table"]])
+# Reformat into prompt-completion examples
+def format_example(example):
+    history = example.get("history", [])
+    question = example.get("question", "")
+    paragraphs = example.get("paragraphs", [])
+    table = example.get("table", [])
+    program = example.get("program", [])
 
-        context = f"Context:\n{paragraphs}\n\nTable:\n{table}"
-        instruction = f"Question: {question}\n{context}\n\nGenerate the program to compute the answer."
+    # Join context
+    history_block = " ".join(history)
+    context_block = "\n".join(paragraphs)
+    table_block = "\n".join([f"{row['name']}: {row['value']}" for row in table])
+    full_question = f"{history_block} {question}".strip()
 
-        samples.append({
-            "input": instruction.strip(),
-            "output": " ".join(ex["program"]).strip()
-        })
+    # Final prompt
+    prompt = f"""<|user|>
+Question: {full_question}
+Context:
+{context_block}
 
-    return Dataset.from_list(samples)
+Table:
+{table_block}
 
-dataset = load_and_format("data/train_small.json")
+Generate the program to compute the answer.
+<|assistant|>"""
 
-# Format for SFT
-def format_instruction(example):
-    return f"<|user|>\n{example['input']}\n<|assistant|>\n{example['output']}"
+    program_text = " ".join(program)
+    return {"text": prompt + " " + program_text}
 
-dataset = dataset.map(lambda x: {"text": format_instruction(x)})
+# Apply formatting
+dataset = raw_dataset.map(format_example, remove_columns=raw_dataset.column_names)
 
 # Tokenize
 tokenized = dataset.map(lambda x: tokenizer(x["text"]), remove_columns=["text"])
 
-# Prepare for SFT
+# Prepare model for SFT
 model = FastLanguageModel.prepare_model_for_training(model)
 
-# Trainer config
+# Trainer setup
 trainer = Trainer(
     model = model,
     train_dataset = tokenized,
@@ -65,9 +71,9 @@ trainer = Trainer(
         learning_rate = 2e-5,
         fp16 = True,
         logging_steps = 10,
-        output_dir = "checkpoints/unsloth-convfinqa",
+        output_dir = "checkpoints/unsloth-convfinqa-hf",
         save_strategy = "epoch",
-        report_to = "none"
+        report_to = "none",
     ),
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False),
 )
