@@ -2,7 +2,6 @@ import torch
 from datasets import load_dataset
 from unsloth import FastLanguageModel
 from transformers import DataCollatorForLanguageModeling
-from peft import LoraConfig, get_peft_model, TaskType
 from trl import SFTTrainer, SFTConfig
 import wandb
 
@@ -18,41 +17,18 @@ logging_steps = 1
 output_dir = "outputs"
 project_name = "tomoro"
 
-# --- Load Dataset ---
-dataset = load_dataset("TheFinAI/CONVFINQA_train", split="train")
-
+# --- Format as conversation ---
 def format_conversation(example):
     dialogue = ""
-    for turn in example["entries"]:
-        role = turn["role"]
-        content = turn["content"].strip()
-        if role == "human":
-            dialogue += f"<|user|>\n{content}\n"
-        elif role == "agent":
-            dialogue += f"<|assistant|>\n{content}\n"
+    if "entries" in example and isinstance(example["entries"], list):
+        for turn in example["entries"]:
+            role = turn.get("role", "")
+            content = turn.get("content", "").strip()
+            if role == "human":
+                dialogue += f"<|user|>\n{content}\n"
+            elif role == "agent":
+                dialogue += f"<|assistant|>\n{content}\n"
     return {"text": dialogue.strip()}
-
-dataset = dataset.map(format_conversation)
-dataset = dataset.remove_columns(["id", "entries"])
-
-# --- Load Model & Tokenizer ---
-model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name=model_name,
-    max_seq_length=max_seq_length,
-    dtype=torch.float16,
-    load_in_4bit=True,
-    attn_implementation="flash_attention_2"
-)
-
-# --- Inject LoRA Adapters ---
-peft_config = LoraConfig(
-    r=64,
-    lora_alpha=16,
-    lora_dropout=0.05,
-    bias="none",
-    task_type=TaskType.CAUSAL_LM
-)
-model = get_peft_model(model, peft_config)
 
 # --- Tokenize ---
 def tokenize(example):
@@ -65,12 +41,38 @@ def tokenize(example):
         return_special_tokens_mask=True,
     )
 
-dataset = dataset.map(tokenize, remove_columns=["text"], batched=True, batch_size=8)
+# --- Load Dataset ---
+dataset = load_dataset("TheFinAI/CONVFINQA_train", split="train")
 
-# --- Split Dataset ---
+# format entries -> text
+dataset = dataset.map(format_conversation)
+
+# remove unused columns (entries is gone already)
+columns_to_remove = [col for col in ["id", "entries"] if col in dataset.column_names]
+if columns_to_remove:
+    dataset = dataset.remove_columns(columns_to_remove)
+
+# --- Tokenize Dataset ---
+dataset = dataset.map(tokenize, batched=True, batch_size=8)
+
+# --- Train/Val Split ---
 split = dataset.train_test_split(test_size=0.05, seed=42)
 train_dataset = split["train"]
 eval_dataset = split["test"]
+
+# --- Load Model & Tokenizer with LoRA already integrated ---
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name=model_name,
+    max_seq_length=max_seq_length,
+    dtype=torch.float16,
+    load_in_4bit=True,
+    attn_implementation="flash_attention_2"
+)
+
+# --- Verify model is ready for training ---
+model.print_trainable_parameters()
+assert any(p.requires_grad for p in model.parameters()), "No parameters require gradients!"
+model.train()
 
 # --- Data Collator ---
 collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
@@ -101,7 +103,8 @@ trainer = SFTTrainer(
         report_to="wandb",
         run_name="llama-convfinqa-sft",
         fp16=True,
-        bf16=False,    
+        bf16=False,
+    ),
 )
 
 # --- Train ---
