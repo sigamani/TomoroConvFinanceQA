@@ -24,7 +24,7 @@ def safe(val):
         return None
 
 # --- Load model & tokenizer ---
-model_path = "outputs/CHECKPOINT-200"  # ✅ adjust as needed
+model_path = "outputs/checkpoint-200"  
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_path,
     max_seq_length=2048,
